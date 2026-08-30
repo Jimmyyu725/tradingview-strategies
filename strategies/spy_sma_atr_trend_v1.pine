@@ -1,0 +1,112 @@
+//@version=6
+strategy(
+    "SPY SMA 50/200 + ATR Trend v1",
+    overlay = true,
+    initial_capital = 100000,
+    currency = currency.USD,
+    default_qty_type = strategy.percent_of_equity,
+    default_qty_value = 95,
+    pyramiding = 0,
+    commission_type = strategy.commission.percent,
+    commission_value = 0.0011,
+    slippage = 1,
+    process_orders_on_close = false,
+    calc_on_order_fills = false,
+    calc_on_every_tick = false,
+    margin_long = 100,
+    margin_short = 100
+)
+
+const float INITIAL_CAPITAL = 100000.0
+const float POSITION_FRACTION = 0.95
+const float COMMISSION_PERCENT = 0.0011
+
+int fastLength = input.int(50, "Fast SMA length", minval = 1)
+int slowLength = input.int(200, "Slow SMA length", minval = 1)
+int atrLength = input.int(14, "ATR length", minval = 1)
+float atrMultiplier = input.float(2.0, "ATR multiplier", minval = 0.1, step = 0.1)
+int startDate = input.time(timestamp("1 Jan 2022 00:00 +0000"), "Backtest start")
+
+if barstate.isfirst and (syminfo.ticker != "SPY" or timeframe.period != "1D")
+    runtime.error("This strategy requires SPY on the 1D timeframe.")
+
+float fastSma = ta.sma(close, fastLength)
+float slowSma = ta.sma(close, slowLength)
+float atr = ta.atr(atrLength)
+bool crossedAbove = ta.crossover(fastSma, slowSma)
+bool crossedBelow = ta.crossunder(fastSma, slowSma)
+bool indicatorsReady = not na(fastSma) and not na(slowSma) and not na(atr)
+bool inBacktest = time >= startDate
+bool goldenCross = inBacktest and indicatorsReady and crossedAbove
+bool deathCross = inBacktest and indicatorsReady and crossedBelow
+
+var float entryAtr = na
+var float trailStop = na
+var int stopRegressionCount = 0
+var int preStartBarCount = 0
+
+if time < startDate
+    preStartBarCount += 1
+
+if barstate.islast and preStartBarCount < slowLength
+    runtime.error("At least 200 pre-start daily bars are required.")
+
+if goldenCross and strategy.position_size == 0
+    entryAtr := atr
+    float stopDistance = atrMultiplier * entryAtr
+    int initialStopTicks = math.max(1, int(math.ceil(stopDistance / syminfo.mintick)))
+    strategy.entry("Long", strategy.long)
+    strategy.exit("ATR Stop", "Long", loss = initialStopTicks)
+
+if strategy.position_size > 0 and deathCross
+    strategy.cancel("ATR Stop")
+    strategy.close("Long", comment = "Death Cross")
+else if strategy.position_size > 0 and not na(entryAtr)
+    float initialStop = strategy.position_avg_price - atrMultiplier * entryAtr
+    float candidateStop = close - atrMultiplier * atr
+    float previousStop = trailStop
+    trailStop := na(trailStop) ? math.max(initialStop, candidateStop) : math.max(trailStop, candidateStop)
+    if not na(previousStop) and trailStop < previousStop
+        stopRegressionCount += 1
+    strategy.exit("ATR Stop", "Long", stop = trailStop)
+
+if strategy.position_size == 0 and strategy.position_size[1] > 0
+    entryAtr := na
+    trailStop := na
+
+var float benchmarkEntryPrice = na
+if inBacktest and na(benchmarkEntryPrice)
+    benchmarkEntryPrice := close + syminfo.mintick
+
+float commissionRate = COMMISSION_PERCENT / 100.0
+float benchmarkDeployedCapital = INITIAL_CAPITAL * POSITION_FRACTION
+float benchmarkCash = INITIAL_CAPITAL * (1.0 - POSITION_FRACTION)
+float benchmarkShares = not na(benchmarkEntryPrice) ? benchmarkDeployedCapital / benchmarkEntryPrice : na
+float benchmarkEntryCommission = benchmarkDeployedCapital * commissionRate
+float benchmarkExitPrice = not na(benchmarkEntryPrice) ? math.max(syminfo.mintick, close - syminfo.mintick) : na
+float benchmarkExitNotional = not na(benchmarkShares) ? benchmarkShares * benchmarkExitPrice : na
+float benchmarkExitCommission = not na(benchmarkExitNotional) ? benchmarkExitNotional * commissionRate : na
+float benchmarkEquity = not na(benchmarkExitNotional) ? benchmarkCash + benchmarkExitNotional - benchmarkEntryCommission - benchmarkExitCommission : na
+float benchmarkReturn = not na(benchmarkEquity) ? (benchmarkEquity / INITIAL_CAPITAL - 1.0) * 100.0 : na
+float strategyEquityReturn = (strategy.equity / INITIAL_CAPITAL - 1.0) * 100.0
+float excessReturn = not na(benchmarkReturn) ? strategyEquityReturn - benchmarkReturn : na
+
+plot(fastSma, "Fast SMA", color = color.blue, linewidth = 2)
+plot(slowSma, "Slow SMA", color = color.orange, linewidth = 2)
+plot(strategy.position_size > 0 ? trailStop : na, "ATR Stop", color = color.red, linewidth = 2, style = plot.style_linebr)
+plotshape(goldenCross, title = "Golden Cross", style = shape.triangleup, location = location.belowbar, color = color.green, size = size.tiny)
+plotshape(deathCross, title = "Death Cross", style = shape.triangledown, location = location.abovebar, color = color.red, size = size.tiny)
+bgcolor(time < startDate ? color.new(color.gray, 90) : na, title = "Pre-backtest period")
+
+var table evidenceTable = table.new(position.bottom_right, 2, 5, border_width = 1)
+if barstate.islast
+    table.cell(evidenceTable, 0, 0, "Metric", bgcolor = color.new(color.gray, 70))
+    table.cell(evidenceTable, 1, 0, "Value", bgcolor = color.new(color.gray, 70))
+    table.cell(evidenceTable, 0, 1, "Strategy equity return")
+    table.cell(evidenceTable, 1, 1, str.tostring(strategyEquityReturn, "#.##") + "%")
+    table.cell(evidenceTable, 0, 2, "Buy & hold return")
+    table.cell(evidenceTable, 1, 2, str.tostring(benchmarkReturn, "#.##") + "%")
+    table.cell(evidenceTable, 0, 3, "Excess return")
+    table.cell(evidenceTable, 1, 3, str.tostring(excessReturn, "#.##") + "%")
+    table.cell(evidenceTable, 0, 4, "Stop regressions")
+    table.cell(evidenceTable, 1, 4, str.tostring(stopRegressionCount))

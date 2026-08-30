@@ -1,0 +1,11 @@
+{
+  "name": "tradingview-strategies",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:pine": "node --test tests/spy_sma_atr_trend_static.test.mjs",
+    "test:report": "node --test tests/run_tradingview_backtest.test.mjs"
+  }
+}
