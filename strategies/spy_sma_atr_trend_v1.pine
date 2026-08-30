@@ -20,6 +20,7 @@ strategy(
 const float INITIAL_CAPITAL = 100000.0
 const float POSITION_FRACTION = 0.95
 const float COMMISSION_PERCENT = 0.0011
+const int MIN_PRESTART_BARS = 200
 
 int fastLength = input.int(50, "Fast SMA length", minval = 1)
 int slowLength = input.int(200, "Slow SMA length", minval = 2)
@@ -27,7 +28,7 @@ int atrLength = input.int(14, "ATR length", minval = 1)
 float atrMultiplier = input.float(2.0, "ATR multiplier", minval = 0.1, step = 0.1)
 int startDate = input.time(timestamp("1 Jan 2022 00:00 +0000"), "Backtest start")
 
-if barstate.isfirst and (syminfo.ticker != "SPY" or timeframe.period != "1D")
+if barstate.isfirst and (ticker.standard(syminfo.tickerid) != "AMEX:SPY" or not chart.is_standard or timeframe.period != "1D")
     runtime.error("This strategy requires SPY on the 1D timeframe.")
 
 float fastSma = ta.sma(close, fastLength)
@@ -48,8 +49,12 @@ var int preStartBarCount = 0
 if time < startDate
     preStartBarCount += 1
 
-if barstate.islast and preStartBarCount < slowLength
+if barstate.islast and preStartBarCount < MIN_PRESTART_BARS
     runtime.error("At least 200 pre-start daily bars are required.")
+
+if strategy.position_size == 0 and strategy.position_size[1] > 0
+    entryAtr := na
+    trailStop := na
 
 if goldenCross and strategy.position_size == 0
     entryAtr := atr
@@ -70,25 +75,27 @@ else if strategy.position_size > 0 and not na(entryAtr)
         stopRegressionCount += 1
     strategy.exit("ATR Stop", "Long", stop = trailStop)
 
-if strategy.position_size == 0 and strategy.position_size[1] > 0
-    entryAtr := na
-    trailStop := na
-
 var float benchmarkEntryPrice = na
 if inBacktest and na(benchmarkEntryPrice)
     benchmarkEntryPrice := close + syminfo.mintick
 
 float commissionRate = COMMISSION_PERCENT / 100.0
 float benchmarkDeployedCapital = INITIAL_CAPITAL * POSITION_FRACTION
-float benchmarkCash = INITIAL_CAPITAL * (1.0 - POSITION_FRACTION)
-float benchmarkShares = not na(benchmarkEntryPrice) ? benchmarkDeployedCapital / benchmarkEntryPrice : na
-float benchmarkEntryCommission = benchmarkDeployedCapital * commissionRate
+float benchmarkRawShares = not na(benchmarkEntryPrice) ? benchmarkDeployedCapital / benchmarkEntryPrice : na
+float benchmarkShares = not na(benchmarkRawShares) ? math.floor(benchmarkRawShares / syminfo.mincontract) * syminfo.mincontract : na
+float benchmarkEntryNotional = not na(benchmarkShares) ? benchmarkShares * benchmarkEntryPrice : na
+float benchmarkEntryCommission = not na(benchmarkEntryNotional) ? benchmarkEntryNotional * commissionRate : na
+float benchmarkCash = not na(benchmarkEntryNotional) ? INITIAL_CAPITAL - benchmarkEntryNotional - benchmarkEntryCommission : na
 float benchmarkExitPrice = not na(benchmarkEntryPrice) ? math.max(syminfo.mintick, close - syminfo.mintick) : na
 float benchmarkExitNotional = not na(benchmarkShares) ? benchmarkShares * benchmarkExitPrice : na
 float benchmarkExitCommission = not na(benchmarkExitNotional) ? benchmarkExitNotional * commissionRate : na
-float benchmarkEquity = not na(benchmarkExitNotional) ? benchmarkCash + benchmarkExitNotional - benchmarkEntryCommission - benchmarkExitCommission : na
+float benchmarkEquity = not na(benchmarkExitNotional) ? benchmarkCash + benchmarkExitNotional - benchmarkExitCommission : na
 float benchmarkReturn = not na(benchmarkEquity) ? (benchmarkEquity / INITIAL_CAPITAL - 1.0) * 100.0 : na
-float strategyEquityReturn = (strategy.equity / INITIAL_CAPITAL - 1.0) * 100.0
+float hypotheticalExitPrice = math.max(syminfo.mintick, close - syminfo.mintick)
+float hypotheticalExitSlippage = strategy.position_size > 0 ? strategy.position_size * (close - hypotheticalExitPrice) : 0.0
+float hypotheticalExitCommission = strategy.position_size > 0 ? strategy.position_size * hypotheticalExitPrice * commissionRate : 0.0
+float strategyLiquidatedEquity = strategy.position_size > 0 ? strategy.equity - hypotheticalExitSlippage - hypotheticalExitCommission : strategy.equity
+float strategyEquityReturn = (strategyLiquidatedEquity / INITIAL_CAPITAL - 1.0) * 100.0
 float excessReturn = not na(benchmarkReturn) ? strategyEquityReturn - benchmarkReturn : na
 
 plot(fastSma, "Fast SMA", color = color.blue, linewidth = 2)

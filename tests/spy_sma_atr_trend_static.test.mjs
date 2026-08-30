@@ -27,6 +27,7 @@ test("defines inputs, history validation, and long-only crossover signals", () =
   assert.match(source, /INITIAL_CAPITAL\s*=\s*100000\.0/);
   assert.match(source, /POSITION_FRACTION\s*=\s*0\.95/);
   assert.match(source, /COMMISSION_PERCENT\s*=\s*0\.0011/);
+  assert.match(source, /const\s+int\s+MIN_PRESTART_BARS\s*=\s*200\b/);
   assert.match(source, /fastLength\s*=\s*input\.int\(\s*50\b/);
   assert.match(
     source,
@@ -38,13 +39,11 @@ test("defines inputs, history validation, and long-only crossover signals", () =
     source,
     /startDate\s*=\s*input\.time\(\s*timestamp\(\s*"1 Jan 2022 00:00 \+0000"\s*\)/,
   );
-  assert.match(source, /syminfo\.ticker\s*!=\s*"SPY"/);
-  assert.match(source, /timeframe\.period\s*!=\s*"1D"/);
   assert.match(
     source,
-    /runtime\.error\(\s*"This strategy requires SPY on the 1D timeframe\."\s*\)/,
+    /if\s+barstate\.isfirst\s+and\s+\(\s*ticker\.standard\(\s*syminfo\.tickerid\s*\)\s*!=\s*"AMEX:SPY"\s+or\s+not\s+chart\.is_standard\s+or\s+timeframe\.period\s*!=\s*"1D"\s*\)\s+runtime\.error\(\s*"This strategy requires SPY on the 1D timeframe\."\s*\)/,
   );
-  assert.match(source, /preStartBarCount\s*<\s*slowLength/);
+  assert.match(source, /preStartBarCount\s*<\s*MIN_PRESTART_BARS/);
   assert.match(
     source,
     /runtime\.error\(\s*"At least 200 pre-start daily bars are required\."\s*\)/,
@@ -124,12 +123,24 @@ test("attaches an initial ATR stop and only raises the trailing stop", () => {
     source,
     /if\s+strategy\.position_size\s*==\s*0\s*and\s*strategy\.position_size\[1\]\s*>\s*0\s+entryAtr\s*:=\s*na\s+trailStop\s*:=\s*na/,
   );
+  const exitResetIndex = source.search(
+    /if\s+strategy\.position_size\s*==\s*0\s*and\s*strategy\.position_size\[1\]\s*>\s*0/,
+  );
+  const goldenCrossEntryIndex = source.search(
+    /if\s+goldenCross\s+and\s+strategy\.position_size\s*==\s*0/,
+  );
+  assert.ok(exitResetIndex >= 0, "exit reset block must exist");
+  assert.ok(goldenCrossEntryIndex >= 0, "golden-cross entry block must exist");
+  assert.ok(
+    exitResetIndex < goldenCrossEntryIndex,
+    "exit reset must run before a same-bar golden-cross entry",
+  );
 });
 
 test("cancels the ATR stop before closing on a death cross", () => {
   assert.match(
     source,
-    /strategy\.cancel\(\s*"ATR Stop"\s*\)[\s\S]*strategy\.close\(\s*"Long"\s*,\s*comment\s*=\s*"Death Cross"\s*\)/,
+    /^if[ \t]+strategy\.position_size[ \t]*>[ \t]*0[ \t]+and[ \t]+deathCross[ \t]*\r?\n([ \t]+)strategy\.cancel\([ \t]*"ATR Stop"[ \t]*\)[ \t]*\r?\n\1strategy\.close\([ \t]*"Long"[ \t]*,[ \t]*comment[ \t]*=[ \t]*"Death Cross"[ \t]*\)/m,
   );
 });
 
@@ -159,15 +170,23 @@ test("computes and renders the benchmark, returns, plots, and evidence table", (
   );
   assert.match(
     source,
-    /benchmarkCash\s*=\s*INITIAL_CAPITAL\s*\*\s*\(\s*1\.0\s*-\s*POSITION_FRACTION\s*\)/,
+    /benchmarkRawShares\s*=\s*[^\n]*benchmarkDeployedCapital\s*\/\s*benchmarkEntryPrice/,
   );
   assert.match(
     source,
-    /benchmarkShares\s*=\s*[^\n]*benchmarkDeployedCapital\s*\/\s*benchmarkEntryPrice/,
+    /benchmarkShares\s*=\s*[^\n]*math\.floor\(\s*benchmarkRawShares\s*\/\s*syminfo\.mincontract\s*\)\s*\*\s*syminfo\.mincontract/,
   );
   assert.match(
     source,
-    /benchmarkEntryCommission\s*=\s*benchmarkDeployedCapital\s*\*\s*commissionRate/,
+    /benchmarkEntryNotional\s*=\s*[^\n]*benchmarkShares\s*\*\s*benchmarkEntryPrice/,
+  );
+  assert.match(
+    source,
+    /benchmarkEntryCommission\s*=\s*[^\n]*benchmarkEntryNotional\s*\*\s*commissionRate/,
+  );
+  assert.match(
+    source,
+    /benchmarkCash\s*=\s*[^\n]*INITIAL_CAPITAL\s*-\s*benchmarkEntryNotional\s*-\s*benchmarkEntryCommission/,
   );
   assert.match(
     source,
@@ -183,7 +202,7 @@ test("computes and renders the benchmark, returns, plots, and evidence table", (
   );
   assert.match(
     source,
-    /benchmarkEquity\s*=\s*[^\n]*benchmarkCash\s*\+\s*benchmarkExitNotional\s*-\s*benchmarkEntryCommission\s*-\s*benchmarkExitCommission/,
+    /benchmarkEquity\s*=\s*[^\n]*benchmarkCash\s*\+\s*benchmarkExitNotional\s*-\s*benchmarkExitCommission/,
   );
   assert.match(
     source,
@@ -191,7 +210,23 @@ test("computes and renders the benchmark, returns, plots, and evidence table", (
   );
   assert.match(
     source,
-    /strategyEquityReturn\s*=\s*\(\s*strategy\.equity\s*\/\s*INITIAL_CAPITAL\s*-\s*1\.0\s*\)\s*\*\s*100\.0/,
+    /hypotheticalExitPrice\s*=\s*math\.max\(\s*syminfo\.mintick\s*,\s*close\s*-\s*syminfo\.mintick\s*\)/,
+  );
+  assert.match(
+    source,
+    /hypotheticalExitSlippage\s*=\s*strategy\.position_size\s*>\s*0\s*\?\s*strategy\.position_size\s*\*\s*\(\s*close\s*-\s*hypotheticalExitPrice\s*\)\s*:\s*0\.0/,
+  );
+  assert.match(
+    source,
+    /hypotheticalExitCommission\s*=\s*strategy\.position_size\s*>\s*0\s*\?\s*strategy\.position_size\s*\*\s*hypotheticalExitPrice\s*\*\s*commissionRate\s*:\s*0\.0/,
+  );
+  assert.match(
+    source,
+    /strategyLiquidatedEquity\s*=\s*strategy\.position_size\s*>\s*0\s*\?\s*strategy\.equity\s*-\s*hypotheticalExitSlippage\s*-\s*hypotheticalExitCommission\s*:\s*strategy\.equity/,
+  );
+  assert.match(
+    source,
+    /strategyEquityReturn\s*=\s*\(\s*strategyLiquidatedEquity\s*\/\s*INITIAL_CAPITAL\s*-\s*1\.0\s*\)\s*\*\s*100\.0/,
   );
   assert.match(
     source,
