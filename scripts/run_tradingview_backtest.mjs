@@ -74,6 +74,15 @@ const requiredPerformanceMetrics = [
   "commission_paid",
   "open_pl",
 ];
+const tradeLimit = 20;
+const addToChartActions = new Set([
+  "Add to chart",
+  "Save and add to chart",
+]);
+const allowedCompileActions = new Set([
+  "Update on chart",
+  ...addToChartActions,
+]);
 
 function numberOrNull(value) {
   if (typeof value === "number") {
@@ -157,27 +166,140 @@ export function validateCompile(compile) {
   ) {
     throw new Error("Pine compile error_count must be 0 when provided.");
   }
+  if (!allowedCompileActions.has(compile.button_clicked)) {
+    throw new Error(
+      "Pine compile button_clicked must place Pine source on the chart.",
+    );
+  }
+  const expectedStudyAdded = addToChartActions.has(compile.button_clicked);
+  if (compile.study_added !== expectedStudyAdded) {
+    throw new Error(
+      `Pine compile study_added must be ${expectedStudyAdded} for ${compile.button_clicked}.`,
+    );
+  }
   return compile;
 }
 
-export function validateStrategyState(state) {
+function validateStateContext(state, label = "Strategy state") {
   if (state?.success !== true || !Array.isArray(state.studies)) {
-    throw new Error("Strategy state must be a successful response with studies.");
+    throw new Error(`${label} must be a successful response with studies.`);
   }
+  if (
+    state.symbol !== undefined &&
+    state.symbol !== "AMEX:SPY" &&
+    state.symbol !== "SPY"
+  ) {
+    throw new Error(`${label} symbol must be AMEX:SPY or SPY.`);
+  }
+  if (
+    state.full_symbol !== undefined &&
+    state.full_symbol !== "AMEX:SPY"
+  ) {
+    throw new Error(`${label} full_symbol must be AMEX:SPY.`);
+  }
+  if (state.symbol === undefined && state.full_symbol === undefined) {
+    throw new Error(`${label} must identify the SPY symbol.`);
+  }
+  if (state.resolution !== "D") {
+    throw new Error(`${label} resolution must be D.`);
+  }
+  return state;
+}
+
+function entityIdFromStudy(study) {
+  const entityId = study?.id ?? study?.entity_id;
+  return typeof entityId === "string" && entityId.trim() !== ""
+    ? entityId
+    : null;
+}
+
+function exactStrategyInstances(state, label) {
   const matches = state.studies.filter(
     (study) => study?.name === EXPECTED_STRATEGY_NAME,
   );
+  return matches.map((study) => {
+    const entityId = entityIdFromStudy(study);
+    if (entityId === null) {
+      throw new Error(`${label} exact strategy is missing an entity id.`);
+    }
+    return { ...study, entity_id: entityId };
+  });
+}
+
+export function validateStrategyState(state) {
+  validateStateContext(state);
+  const matches = exactStrategyInstances(state, "Strategy state");
   if (matches.length !== 1) {
     throw new Error(
       `Expected exactly one strategy instance named ${EXPECTED_STRATEGY_NAME}; found ${matches.length}.`,
     );
   }
-  const matched = matches[0];
-  const entityId = matched.id ?? matched.entity_id;
-  if (typeof entityId !== "string" || entityId.trim() === "") {
-    throw new Error("Matched strategy instance is missing an entity id.");
+  return matches[0];
+}
+
+function stateEntityIds(state, label) {
+  const ids = state.studies.map((study) => entityIdFromStudy(study));
+  if (ids.some((entityId) => entityId === null)) {
+    throw new Error(`${label} contains a study without an entity id.`);
   }
-  return { ...matched, entity_id: entityId };
+  if (new Set(ids).size !== ids.length) {
+    throw new Error(`${label} contains duplicate study entity ids.`);
+  }
+  return new Set(ids);
+}
+
+export function bindStrategyInstance(beforeState, afterState, compile) {
+  validateCompile(compile);
+  validateStateContext(beforeState, "Pre-compile strategy state");
+  validateStateContext(afterState, "Post-compile strategy state");
+  const beforeMatches = exactStrategyInstances(
+    beforeState,
+    "Pre-compile strategy state",
+  );
+  const afterMatches = exactStrategyInstances(
+    afterState,
+    "Post-compile strategy state",
+  );
+
+  if (compile.button_clicked === "Update on chart") {
+    if (beforeMatches.length !== 1 || afterMatches.length !== 1) {
+      throw new Error(
+        "Update on chart requires exactly one strategy instance before and after compile.",
+      );
+    }
+    if (beforeMatches[0].entity_id !== afterMatches[0].entity_id) {
+      throw new Error(
+        "Update on chart must preserve the bound strategy entity id.",
+      );
+    }
+    return {
+      ...afterMatches[0],
+      compile_action: compile.button_clicked,
+    };
+  }
+
+  if (afterMatches.length !== 1) {
+    throw new Error(
+      "Add to chart requires one exact strategy instance after compile.",
+    );
+  }
+  const beforeIds = stateEntityIds(beforeState, "Pre-compile strategy state");
+  const afterIds = stateEntityIds(afterState, "Post-compile strategy state");
+  const newEntityIds = [...afterIds].filter(
+    (entityId) => !beforeIds.has(entityId),
+  );
+  if (
+    newEntityIds.length !== 1 ||
+    newEntityIds[0] !== afterMatches[0].entity_id
+  ) {
+    throw new Error(
+      "Add to chart must create exactly one new strategy entity.",
+    );
+  }
+  return {
+    ...afterMatches[0],
+    compile_action: compile.button_clicked,
+  };
 }
 
 function inputValue(input) {
@@ -349,7 +471,11 @@ export function validatePerformance(performance) {
   return performance;
 }
 
-export function validateTrades(trades, performanceTradeCount, maximumTrades = 100) {
+export function validateTrades(
+  trades,
+  performanceTradeCount,
+  maximumTrades = tradeLimit,
+) {
   if (trades?.success !== true || !Array.isArray(trades.trades)) {
     throw new Error("Strategy trades must be a successful response with trades.");
   }
@@ -428,11 +554,8 @@ export function validateOhlcv(ohlcv) {
   if (ohlcv.bar_count !== ohlcv.bars.length) {
     throw new Error("OHLCV bar_count must equal bars length.");
   }
-  if (
-    typeof ohlcv.total_available !== "number" ||
-    !Number.isFinite(ohlcv.total_available)
-  ) {
-    throw new Error("OHLCV total_available must be finite.");
+  if (!Number.isInteger(ohlcv.total_available)) {
+    throw new Error("OHLCV total_available must be an integer.");
   }
   if (ohlcv.total_available < ohlcv.bar_count) {
     throw new Error("OHLCV total_available must not be less than bar_count.");
@@ -444,28 +567,45 @@ export function validateOhlcv(ohlcv) {
     throw new Error("OHLCV response must contain exactly 500 returned bars.");
   }
 
-  const lastBar = ohlcv.bars.at(-1);
-  for (const field of ["time", "open", "high", "low", "close"]) {
-    if (typeof lastBar?.[field] !== "number" || !Number.isFinite(lastBar[field])) {
-      throw new Error(`Last OHLCV bar ${field} must be finite.`);
+  let previousTime = null;
+  for (const [index, bar] of ohlcv.bars.entries()) {
+    for (const field of ["time", "open", "high", "low", "close"]) {
+      if (typeof bar?.[field] !== "number" || !Number.isFinite(bar[field])) {
+        throw new Error(`OHLCV bar ${index} ${field} must be finite.`);
+      }
     }
-  }
-  if (
-    [lastBar.open, lastBar.high, lastBar.low, lastBar.close].some(
-      (value) => value <= 0,
-    )
-  ) {
-    throw new Error("Last OHLCV bar OHLC values must be strictly positive.");
-  }
-  if (
-    lastBar.low > lastBar.open ||
-    lastBar.low > lastBar.close ||
-    lastBar.open > lastBar.high ||
-    lastBar.close > lastBar.high
-  ) {
-    throw new Error("Last OHLCV bar has an invalid OHLC relationship.");
+    if (
+      [bar.open, bar.high, bar.low, bar.close].some((value) => value <= 0)
+    ) {
+      throw new Error(
+        `OHLCV bar ${index} OHLC values must be strictly positive.`,
+      );
+    }
+    if (
+      bar.low > bar.open ||
+      bar.low > bar.close ||
+      bar.open > bar.high ||
+      bar.close > bar.high
+    ) {
+      throw new Error(`OHLCV bar ${index} has an invalid OHLC relationship.`);
+    }
+    if (
+      Object.hasOwn(bar, "volume") &&
+      (typeof bar.volume !== "number" ||
+        !Number.isFinite(bar.volume) ||
+        bar.volume < 0)
+    ) {
+      throw new Error(
+        `OHLCV bar ${index} volume must be finite and non-negative.`,
+      );
+    }
+    if (previousTime !== null && bar.time <= previousTime) {
+      throw new Error("OHLCV bar times must be strictly increasing.");
+    }
+    previousTime = bar.time;
   }
 
+  const lastBar = ohlcv.bars.at(-1);
   const end = barDate(lastBar.time);
   if (end < "2022-01-01") {
     throw new Error("Last OHLCV bar must not precede 2022-01-01.");
@@ -513,6 +653,13 @@ export function renderMarkdown(bundle) {
       : Array.isArray(bundle?.trades?.trades)
         ? bundle.trades.trades.length
         : null);
+  const savedTradeCount = Array.isArray(bundle?.trades?.trades)
+    ? bundle.trades.trades.length
+    : null;
+  const reportedTradeLimit = numberOrNull(bundle?.trade_limit) ?? tradeLimit;
+  const tradesTruncated =
+    bundle?.trades_truncated === true ||
+    (orderCount !== null && orderCount > reportedTradeLimit);
   const chart = bundle?.chart ?? {};
 
   return `# SPY SMA 50/200 + ATR 趋势策略回测报告
@@ -547,6 +694,7 @@ export function renderMarkdown(bundle) {
 | 编辑器源码匹配 | ${bundle?.source_matches_editor === true ? "是" : "否"} |
 | 性能指标数量 | ${formatNumber(metricCount)} |
 | 订单记录 | ${formatNumber(orderCount)} |
+| 订单明细保存 | 最近 ${savedTradeCount ?? "不可用"} 条（上限 ${reportedTradeLimit}；总订单 ${orderCount ?? "不可用"}；${tradesTruncated ? "已截断" : "未截断"}） |
 
 ## 回测假设
 
@@ -741,6 +889,8 @@ export async function executeBacktest(run = runTv, options = {}) {
   requireSuccess(await run(["timeframe", "1D"]), "Set chart timeframe");
   const chart = await run(["info"]);
   validateChart(chart);
+  const strategyStateBefore = await run(["state"]);
+  validateStateContext(strategyStateBefore, "Pre-compile strategy state");
 
   requireSuccess(
     await run(["pine", "set", "--file", sourcePath]),
@@ -757,8 +907,12 @@ export async function executeBacktest(run = runTv, options = {}) {
   const compile = await run(["pine", "compile"]);
   validateCompile(compile);
 
-  const strategyState = await run(["state"]);
-  const matchedStrategy = validateStrategyState(strategyState);
+  const strategyStateAfter = await run(["state"]);
+  const matchedStrategy = bindStrategyInstance(
+    strategyStateBefore,
+    strategyStateAfter,
+    compile,
+  );
   const strategyInput = await run([
     "data",
     "indicator",
@@ -776,12 +930,12 @@ export async function executeBacktest(run = runTv, options = {}) {
     predicate: (result) => result?.success === true,
   });
   validatePerformance(performance);
-  const trades = await pollResponse(run, ["data", "trades", "--max", "100"], {
+  const trades = await pollResponse(run, ["data", "trades", "--max", "20"], {
     ...pollingOptions,
     label: "Strategy trades",
     predicate: (result) => result?.success === true,
   });
-  validateTrades(trades, performance.metrics.total_trades, 100);
+  validateTrades(trades, performance.metrics.total_trades, tradeLimit);
   const runTables = async (args) => {
     const response = await run(args);
     if (
@@ -825,10 +979,23 @@ export async function executeBacktest(run = runTv, options = {}) {
     },
     compile,
     source_matches_editor: true,
-    strategy_state: { ...strategyState, entity_id: matchedStrategy.entity_id },
+    compile_action: compile.button_clicked,
+    strategy_state_before: strategyStateBefore,
+    strategy_state_after: strategyStateAfter,
+    strategy_binding: {
+      name: EXPECTED_STRATEGY_NAME,
+      entity_id: matchedStrategy.entity_id,
+      compile_action: matchedStrategy.compile_action,
+    },
+    strategy_state: {
+      ...strategyStateAfter,
+      entity_id: matchedStrategy.entity_id,
+    },
     strategy_input: { ...strategyInput, validated_defaults: validatedDefaults },
     performance,
     trades,
+    trade_limit: tradeLimit,
+    trades_truncated: trades.total_orders > tradeLimit,
     tables,
     table_evidence: tableEvidence,
     last_bar: validatedOhlcv.last_bar,

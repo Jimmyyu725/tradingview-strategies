@@ -14,6 +14,7 @@ import path from "node:path";
 import {
   EXPECTED_STRATEGY_NAME,
   benchmarkMetricFromTables,
+  bindStrategyInstance,
   executeBacktest,
   pollResponse,
   publishArtifacts,
@@ -111,6 +112,8 @@ const validCompile = {
   has_errors: false,
   error_count: 0,
   errors: [],
+  button_clicked: "Update on chart",
+  study_added: false,
 };
 
 const validStrategyState = {
@@ -139,7 +142,15 @@ function completeBundle() {
     chart: validChart,
     period: { start: "2022-01-01", end: "2026-08-28" },
     compile: validCompile,
+    compile_action: "Update on chart",
     source_matches_editor: true,
+    strategy_state_before: validStrategyState,
+    strategy_state_after: validStrategyState,
+    strategy_binding: {
+      name: EXPECTED_STRATEGY_NAME,
+      entity_id: "strategy-1",
+      compile_action: "Update on chart",
+    },
     strategy_state: { ...validStrategyState, entity_id: "strategy-1" },
     strategy_input: {
       ...validStrategyInput,
@@ -153,6 +164,8 @@ function completeBundle() {
     },
     performance: validPerformance,
     trades: validTrades,
+    trade_limit: 20,
+    trades_truncated: false,
     tables: evidenceTables,
     table_evidence: {
       strategy_equity_return: 8.25,
@@ -195,6 +208,8 @@ test("validateCompile requires an explicit error-free compile response", () => {
       has_errors: false,
       error_count: 0,
       errors: [],
+      button_clicked: "Update on chart",
+      study_added: false,
     }),
   );
   assert.throws(
@@ -210,11 +225,39 @@ test("validateCompile requires an explicit error-free compile response", () => {
       }),
     /errors must be an empty array/,
   );
+  for (const buttonClicked of [
+    "Pine Save",
+    "keyboard_shortcut",
+    undefined,
+  ]) {
+    assert.throws(
+      () => validateCompile({ ...validCompile, button_clicked: buttonClicked }),
+      /button_clicked must place Pine source on the chart/,
+    );
+  }
+  assert.throws(
+    () =>
+      validateCompile({
+        ...validCompile,
+        button_clicked: "Add to chart",
+        study_added: false,
+      }),
+    /study_added must be true/,
+  );
+  assert.doesNotThrow(() =>
+    validateCompile({
+      ...validCompile,
+      button_clicked: "Save and add to chart",
+      study_added: true,
+    }),
+  );
 });
 
 test("validateStrategyState requires exactly one exact strategy instance", () => {
   const matched = validateStrategyState({
     success: true,
+    symbol: "AMEX:SPY",
+    resolution: "D",
     studies: [
       { id: "other-1", name: "Volume" },
       { id: "strategy-1", name: EXPECTED_STRATEGY_NAME },
@@ -226,6 +269,8 @@ test("validateStrategyState requires exactly one exact strategy instance", () =>
     () =>
       validateStrategyState({
         success: true,
+        symbol: "AMEX:SPY",
+        resolution: "D",
         studies: [{ id: "wrong", name: `${EXPECTED_STRATEGY_NAME} copy` }],
       }),
     /exactly one strategy instance/,
@@ -234,12 +279,72 @@ test("validateStrategyState requires exactly one exact strategy instance", () =>
     () =>
       validateStrategyState({
         success: true,
+        symbol: "AMEX:SPY",
+        resolution: "D",
         studies: [
           { id: "strategy-1", name: EXPECTED_STRATEGY_NAME },
           { id: "strategy-2", name: EXPECTED_STRATEGY_NAME },
         ],
       }),
     /exactly one strategy instance/,
+  );
+});
+
+test("bindStrategyInstance proves update identity and add creates a new entity", () => {
+  const updated = bindStrategyInstance(
+    validStrategyState,
+    { ...validStrategyState, symbol: "SPY" },
+    validCompile,
+  );
+  assert.equal(updated.entity_id, "strategy-1");
+  assert.equal(updated.compile_action, "Update on chart");
+
+  const addCompile = {
+    ...validCompile,
+    button_clicked: "Add to chart",
+    study_added: true,
+  };
+  const beforeAdd = {
+    ...validStrategyState,
+    studies: [{ id: "volume-1", name: "Volume" }],
+  };
+  const afterAdd = {
+    ...validStrategyState,
+    studies: [
+      { id: "volume-1", name: "Volume" },
+      { id: "strategy-2", name: EXPECTED_STRATEGY_NAME },
+    ],
+  };
+  assert.equal(
+    bindStrategyInstance(beforeAdd, afterAdd, addCompile).entity_id,
+    "strategy-2",
+  );
+  assert.throws(
+    () =>
+      bindStrategyInstance(
+        validStrategyState,
+        validStrategyState,
+        addCompile,
+      ),
+    /new strategy entity/,
+  );
+  assert.throws(
+    () =>
+      bindStrategyInstance(
+        { ...validStrategyState, symbol: "SPY", full_symbol: "NASDAQ:AAPL" },
+        validStrategyState,
+        validCompile,
+      ),
+    /full_symbol must be AMEX:SPY/,
+  );
+  assert.throws(
+    () =>
+      bindStrategyInstance(
+        validStrategyState,
+        validStrategyState,
+        { ...validCompile, button_clicked: "Pine Save" },
+      ),
+    /button_clicked must place Pine source on the chart/,
   );
 });
 
@@ -415,6 +520,15 @@ test("validatePerformance requires complete finite USD strategy metrics", () => 
 
 test("validateTrades rejects contradictory or missing order evidence", () => {
   assert.doesNotThrow(() => validateTrades(validTrades, validMetrics.total_trades));
+  const truncatedTrades = {
+    ...validTrades,
+    total_orders: 21,
+    trade_count: 20,
+    trades: Array.from({ length: 20 }, (_, index) => ({ id: `${index + 1}` })),
+  };
+  assert.doesNotThrow(() =>
+    validateTrades(truncatedTrades, validMetrics.total_trades),
+  );
   assert.throws(
     () =>
       validateTrades(
@@ -495,6 +609,10 @@ test("validateOhlcv requires sufficient sane daily history", () => {
     /must not be less than bar_count/,
   );
   assert.throws(
+    () => validateOhlcv({ ...validOhlcv, total_available: 900.5 }),
+    /total_available must be an integer/,
+  );
+  assert.throws(
     () => validateOhlcv({ ...validOhlcv, total_available: 699 }),
     /at least 700/,
   );
@@ -519,6 +637,38 @@ test("validateOhlcv requires sufficient sane daily history", () => {
         ],
       }),
     /OHLC values must be strictly positive/,
+  );
+  assert.throws(
+    () =>
+      validateOhlcv({
+        ...validOhlcv,
+        bars: validOhlcv.bars.map((bar, index) =>
+          index === 250 ? { ...bar, close: -1 } : bar,
+        ),
+      }),
+    /OHLCV bar 250 OHLC values must be strictly positive/,
+  );
+  assert.throws(
+    () =>
+      validateOhlcv({
+        ...validOhlcv,
+        bars: validOhlcv.bars.map((bar, index) =>
+          index === 250
+            ? { ...bar, time: validOhlcv.bars[249].time }
+            : bar,
+        ),
+      }),
+    /OHLCV bar times must be strictly increasing/,
+  );
+  assert.throws(
+    () =>
+      validateOhlcv({
+        ...validOhlcv,
+        bars: validOhlcv.bars.map((bar, index) =>
+          index === 250 ? { ...bar, volume: -1 } : bar,
+        ),
+      }),
+    /OHLCV bar 250 volume must be finite and non-negative/,
   );
   assert.throws(
     () =>
@@ -621,7 +771,28 @@ test("renderMarkdown reports results, evidence, assumptions, and safety scope", 
   assert.match(markdown, /超额\s*\|\s*-4\.25%/);
   assert.match(markdown, /止损下移\s*\|\s*0(?:\.00)?/);
   assert.match(markdown, /订单记录\s*\|\s*4/);
+  assert.match(markdown, /订单明细保存\s*\|\s*最近 4 条.*上限 20.*未截断/);
   assert.match(markdown, /没有连接券商或提交真实订单/);
+});
+
+test("renderMarkdown discloses when trade evidence is truncated", () => {
+  const trades = {
+    ...validTrades,
+    total_orders: 21,
+    trade_count: 20,
+    trades: Array.from({ length: 20 }, (_, index) => ({ id: `${index + 1}` })),
+  };
+  const markdown = renderMarkdown({
+    ...completeBundle(),
+    trades,
+    trade_limit: 20,
+    trades_truncated: true,
+  });
+
+  assert.match(
+    markdown,
+    /订单明细保存\s*\|\s*最近 20 条.*总订单 21.*已截断/,
+  );
 });
 
 test("renderMarkdown marks non-numeric metric values unavailable", () => {
@@ -678,7 +849,7 @@ test("executeBacktest validates complete synchronous evidence before publishing"
     }
     if (command === "data indicator strategy-1") return validStrategyInput;
     if (command === "data strategy") return validPerformance;
-    if (command === "data trades --max 100") {
+    if (command === "data trades --max 20") {
       if (!stateSeen) throw new Error("Strategy state was not validated.");
       return validTrades;
     }
@@ -713,6 +884,12 @@ test("executeBacktest validates complete synchronous evidence before publishing"
     "2022-01-01T00:00:00.000Z",
   );
   assert.equal(result.bundle.period.end, "2026-08-28");
+  assert.equal(result.bundle.trade_limit, 20);
+  assert.equal(result.bundle.trades_truncated, false);
+  assert.equal(result.bundle.compile_action, "Update on chart");
+  assert.equal(result.bundle.strategy_binding.entity_id, "strategy-1");
+  assert.deepEqual(result.bundle.strategy_state_before, validStrategyState);
+  assert.deepEqual(result.bundle.strategy_state_after, validStrategyState);
   assert.equal(tableCalls, 2);
   assert.deepEqual(sleeps, [1000]);
   assert.doesNotMatch(renderMarkdown(result.bundle), /不可用/);
@@ -723,6 +900,39 @@ test("executeBacktest validates complete synchronous evidence before publishing"
         `data tables --filter ${EXPECTED_STRATEGY_NAME}`,
     ),
   );
+});
+
+test("executeBacktest rejects Pine Save before publishing", async () => {
+  const localSource = readFileSync(
+    new URL("../strategies/spy_sma_atr_trend_v1.pine", import.meta.url),
+    "utf8",
+  );
+  let publishCalls = 0;
+  const run = (args) => {
+    const command = args.join(" ");
+    if (command === "symbol SPY" || command === "timeframe 1D") {
+      return { success: true };
+    }
+    if (command === "info") return validChart;
+    if (command === "state") return validStrategyState;
+    if (args[0] === "pine" && args[1] === "set") return { success: true };
+    if (command === "pine get") return { success: true, source: localSource };
+    if (command === "pine compile") {
+      return { ...validCompile, button_clicked: "Pine Save" };
+    }
+    throw new Error(`Unexpected command after invalid compile: ${command}`);
+  };
+
+  await assert.rejects(
+    () =>
+      executeBacktest(run, {
+        publish: () => {
+          publishCalls += 1;
+        },
+      }),
+    /button_clicked must place Pine source on the chart/,
+  );
+  assert.equal(publishCalls, 0);
 });
 
 test("executeBacktest stops on failed trade evidence", async () => {
@@ -748,7 +958,7 @@ test("executeBacktest stops on failed trade evidence", async () => {
     if (command === "state") return validStrategyState;
     if (command === "data indicator strategy-1") return validStrategyInput;
     if (command === "data strategy") return validPerformance;
-    if (command === "data trades --max 100") {
+    if (command === "data trades --max 20") {
       return { success: false, error: "orders unavailable" };
     }
     throw new Error(`Unexpected command after failed trades: ${command}`);
@@ -762,7 +972,7 @@ test("executeBacktest stops on failed trade evidence", async () => {
       }),
     /Strategy trades unavailable after 1 attempts: orders unavailable/,
   );
-  assert.deepEqual(calls.at(-1), ["data", "trades", "--max", "100"]);
+  assert.deepEqual(calls.at(-1), ["data", "trades", "--max", "20"]);
 });
 
 test("publishArtifacts writes a complete JSON and Markdown pair", () => {
