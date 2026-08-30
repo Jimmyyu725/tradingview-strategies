@@ -885,7 +885,7 @@ export async function executeBacktest(run = runTv, options = {}) {
   } = options;
   const localSource = readFileSync(sourcePath, "utf8");
 
-  requireSuccess(await run(["symbol", "SPY"]), "Set chart symbol");
+  requireSuccess(await run(["symbol", "AMEX:SPY"]), "Set chart symbol");
   requireSuccess(await run(["timeframe", "1D"]), "Set chart timeframe");
   const chart = await run(["info"]);
   validateChart(chart);

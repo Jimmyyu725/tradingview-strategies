@@ -836,7 +836,7 @@ test("executeBacktest validates complete synchronous evidence before publishing"
   const run = (args) => {
     calls.push(args);
     const command = args.join(" ");
-    if (command === "symbol SPY" || command === "timeframe 1D") {
+    if (command === "symbol AMEX:SPY" || command === "timeframe 1D") {
       return { success: true };
     }
     if (command === "info") return validChart;
@@ -877,6 +877,7 @@ test("executeBacktest validates complete synchronous evidence before publishing"
     json: "/tmp/report.json",
     markdown: "/tmp/report.md",
   });
+  assert.deepEqual(calls[0], ["symbol", "AMEX:SPY"]);
   assert.equal(result.bundle, publishedBundle);
   assert.equal(result.bundle.strategy_state.entity_id, "strategy-1");
   assert.equal(
@@ -910,7 +911,7 @@ test("executeBacktest rejects Pine Save before publishing", async () => {
   let publishCalls = 0;
   const run = (args) => {
     const command = args.join(" ");
-    if (command === "symbol SPY" || command === "timeframe 1D") {
+    if (command === "symbol AMEX:SPY" || command === "timeframe 1D") {
       return { success: true };
     }
     if (command === "info") return validChart;
@@ -944,7 +945,7 @@ test("executeBacktest stops on failed trade evidence", async () => {
   const run = async (args) => {
     calls.push(args);
     const command = args.join(" ");
-    if (command === "symbol SPY" || command === "timeframe 1D") {
+    if (command === "symbol AMEX:SPY" || command === "timeframe 1D") {
       return { success: true };
     }
     if (command === "info") return validChart;
