@@ -143,6 +143,10 @@ test("avoids lookahead and intrabar recalculation", () => {
 test("computes and renders the benchmark, returns, plots, and evidence table", () => {
   assert.match(
     source,
+    /if\s+inBacktest\s+and\s+na\(\s*benchmarkEntryPrice\s*\)\s+benchmarkEntryPrice\s*:=\s*close\s*\+\s*syminfo\.mintick/,
+  );
+  assert.match(
+    source,
     /benchmarkEntryPrice\s*:=\s*close\s*\+\s*syminfo\.mintick/,
   );
   assert.match(
@@ -159,11 +163,19 @@ test("computes and renders the benchmark, returns, plots, and evidence table", (
   );
   assert.match(
     source,
+    /benchmarkShares\s*=\s*[^\n]*benchmarkDeployedCapital\s*\/\s*benchmarkEntryPrice/,
+  );
+  assert.match(
+    source,
     /benchmarkEntryCommission\s*=\s*benchmarkDeployedCapital\s*\*\s*commissionRate/,
   );
   assert.match(
     source,
     /benchmarkExitPrice\s*=\s*[^\n]*close\s*-\s*syminfo\.mintick/,
+  );
+  assert.match(
+    source,
+    /benchmarkExitNotional\s*=\s*[^\n]*benchmarkShares\s*\*\s*benchmarkExitPrice/,
   );
   assert.match(
     source,
@@ -207,4 +219,20 @@ test("computes and renders the benchmark, returns, plots, and evidence table", (
   assert.match(source, /"Buy & hold return"/);
   assert.match(source, /"Excess return"/);
   assert.match(source, /"Stop regressions"/);
+  assert.match(
+    source,
+    /table\.cell\(\s*evidenceTable\s*,\s*1\s*,\s*1\s*,\s*str\.tostring\(\s*strategyEquityReturn\b/,
+  );
+  assert.match(
+    source,
+    /table\.cell\(\s*evidenceTable\s*,\s*1\s*,\s*2\s*,\s*str\.tostring\(\s*benchmarkReturn\b/,
+  );
+  assert.match(
+    source,
+    /table\.cell\(\s*evidenceTable\s*,\s*1\s*,\s*3\s*,\s*str\.tostring\(\s*excessReturn\b/,
+  );
+  assert.match(
+    source,
+    /table\.cell\(\s*evidenceTable\s*,\s*1\s*,\s*4\s*,\s*str\.tostring\(\s*stopRegressionCount\s*\)\s*\)/,
+  );
 });
