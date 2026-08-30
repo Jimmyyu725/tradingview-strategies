@@ -4,3 +4,6 @@
 *.log
 tmp/
 .worktrees/
+data/cache/
+docs/backtests/.dual-momentum-*.tmp/
+docs/backtests/.dual-momentum-*.backup/
