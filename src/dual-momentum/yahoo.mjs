@@ -115,8 +115,16 @@ export function reconstructTotalReturn(bars) {
   return bars.map((bar, position) => {
     if (position > 0) {
       const previous = bars[position - 1];
+      const directGrossReturn = (bar.close + bar.dividend) / previous.close;
       const comparablePreviousClose = previous.close / bar.splitRatio;
-      index *= (bar.close + bar.dividend) / comparablePreviousClose;
+      const splitAdjustedGrossReturn =
+        (bar.close + bar.dividend) / comparablePreviousClose;
+      const grossReturn = bar.splitRatio !== 1 &&
+          Math.abs(Math.log(splitAdjustedGrossReturn)) <
+            Math.abs(Math.log(directGrossReturn))
+        ? splitAdjustedGrossReturn
+        : directGrossReturn;
+      index *= grossReturn;
     }
     return { date: bar.date, index };
   });

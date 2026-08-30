@@ -66,6 +66,14 @@ test("handles a two-for-one split without a false loss", () => {
   assert.deepEqual(reconstructTotalReturn(bars).map((row) => row.index), [1, 1]);
 });
 
+test("does not double apply a split already normalized in provider closes", () => {
+  const bars = [
+    { date: "2017-11-29", close: 91.48, dividend: 0, splitRatio: 1 },
+    { date: "2017-11-30", close: 91.48, dividend: 0, splitRatio: 0.5 },
+  ];
+  assert.deepEqual(reconstructTotalReturn(bars).map((row) => row.index), [1, 1]);
+});
+
 test("excludes the current New York session until its close is final", () => {
   const normalized = normalizeYahooSeries(parseYahooChart(payload, "SPY"));
   assert.equal(
