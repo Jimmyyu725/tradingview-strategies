@@ -52,7 +52,8 @@ if time < startDate
 if barstate.islast and preStartBarCount < MIN_PRESTART_BARS
     runtime.error("At least 200 pre-start daily bars are required.")
 
-if strategy.position_size == 0 and strategy.position_size[1] > 0
+bool tradeClosed = nz(ta.change(strategy.closedtrades), 0) > 0
+if tradeClosed
     entryAtr := na
     trailStop := na
 

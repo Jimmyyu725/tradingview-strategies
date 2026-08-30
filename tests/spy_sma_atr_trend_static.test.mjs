@@ -121,11 +121,13 @@ test("attaches an initial ATR stop and only raises the trailing stop", () => {
   );
   assert.match(
     source,
-    /if\s+strategy\.position_size\s*==\s*0\s*and\s*strategy\.position_size\[1\]\s*>\s*0\s+entryAtr\s*:=\s*na\s+trailStop\s*:=\s*na/,
+    /tradeClosed\s*=\s*nz\(\s*ta\.change\(\s*strategy\.closedtrades\s*\)\s*,\s*0\s*\)\s*>\s*0/,
   );
-  const exitResetIndex = source.search(
-    /if\s+strategy\.position_size\s*==\s*0\s*and\s*strategy\.position_size\[1\]\s*>\s*0/,
+  assert.match(
+    source,
+    /if\s+tradeClosed\s+entryAtr\s*:=\s*na\s+trailStop\s*:=\s*na/,
   );
+  const exitResetIndex = source.search(/if\s+tradeClosed/);
   const goldenCrossEntryIndex = source.search(
     /if\s+goldenCross\s+and\s+strategy\.position_size\s*==\s*0/,
   );
