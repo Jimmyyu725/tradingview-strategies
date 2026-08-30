@@ -1,0 +1,29 @@
+{
+  "generatedAt": "2026-08-30T13:00:41.716Z",
+  "sources": {
+    "BIL": {
+      "url": "https://query1.finance.yahoo.com/v8/finance/chart/BIL?period1=1199145600&period2=1788134400&interval=1d&events=div%2Csplits&includeAdjustedClose=true",
+      "bytes": 502694,
+      "sha256": "b17e9b110a89120f04fc73debe4dec71a6b3c82959b27bda7e1ea335cb27ce4a",
+      "rowCount": 4694,
+      "earliestDate": "2008-01-02",
+      "latestDate": "2026-08-28"
+    },
+    "SPY": {
+      "url": "https://query1.finance.yahoo.com/v8/finance/chart/SPY?period1=1199145600&period2=1788134400&interval=1d&events=div%2Csplits&includeAdjustedClose=true",
+      "bytes": 519935,
+      "sha256": "cc8dcf1cfad57c65aca8813241dc2bfc67c8967d3932e86a310f7f21f3a475d5",
+      "rowCount": 4694,
+      "earliestDate": "2008-01-02",
+      "latestDate": "2026-08-28"
+    },
+    "QQQ": {
+      "url": "https://query1.finance.yahoo.com/v8/finance/chart/QQQ?period1=1199145600&period2=1788134400&interval=1d&events=div%2Csplits&includeAdjustedClose=true",
+      "bytes": 517534,
+      "sha256": "19fce8a13283f08f21dc2e7a25290bfc8ef79cc63002c884a6ee8a8b1d67601a",
+      "rowCount": 4694,
+      "earliestDate": "2008-01-02",
+      "latestDate": "2026-08-28"
+    }
+  }
+}
