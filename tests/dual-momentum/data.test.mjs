@@ -137,6 +137,20 @@ test("loads TradingView symbols sequentially and validates responses", async () 
   const calls = [];
   const run = async (args) => {
     calls.push(args.join(" "));
+    if (args[0] === "ui") {
+      const ticker = calls.some((call) => call === "symbol NASDAQ:QQQ")
+        ? "BATS:QQQ"
+        : "BATS:SPY";
+      return {
+        success: true,
+        result: {
+          actualSymbol: ticker,
+          resolution: "D",
+          seriesLoaded: true,
+          symbolInfo: true,
+        },
+      };
+    }
     if (args[0] === "ohlcv") {
       return {
         success: true,
@@ -150,12 +164,46 @@ test("loads TradingView symbols sequentially and validates responses", async () 
     run,
   );
   assert.deepEqual(Object.keys(bars), ["SPY", "QQQ"]);
-  assert.deepEqual(calls, [
+  assert.deepEqual(calls.map((call) => call.startsWith("ui eval ")
+    ? "ui eval"
+    : call), [
     "symbol AMEX:SPY",
     "timeframe 1D",
+    "ui eval",
     "ohlcv --count 5000",
+    "ui eval",
     "symbol NASDAQ:QQQ",
     "timeframe 1D",
+    "ui eval",
     "ohlcv --count 5000",
+    "ui eval",
   ]);
+});
+
+test("rejects stale TradingView bars when the requested series is not loaded", async () => {
+  const run = async (args) => {
+    if (args[0] === "ui") {
+      return {
+        success: true,
+        result: {
+          actualSymbol: "NASDAQ:QQQ",
+          resolution: "D",
+          seriesLoaded: false,
+          symbolInfo: false,
+        },
+      };
+    }
+    if (args[0] === "ohlcv") {
+      return {
+        success: true,
+        bars: [{ time: Date.parse("2022-01-03T00:00:00Z") / 1000, close: 100 }],
+      };
+    }
+    return { success: true, chart_ready: false };
+  };
+
+  await assert.rejects(
+    () => loadTradingViewBars({ QQQ: "NASDAQ:QQQ" }, run),
+    /TradingView NASDAQ:QQQ series is not loaded/,
+  );
 });
