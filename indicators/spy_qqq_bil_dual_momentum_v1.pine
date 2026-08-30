@@ -1,0 +1,48 @@
+//@version=6
+indicator("SPY QQQ BIL Dual Momentum v1", overlay = false)
+
+const string SPY = "AMEX:SPY"
+const string QQQ = "NASDAQ:QQQ"
+const string BIL = "AMEX:BIL"
+
+string spyTicker = ticker.modify(
+    SPY, session = session.regular, adjustment = adjustment.dividends)
+string qqqTicker = ticker.modify(
+    QQQ, session = session.regular, adjustment = adjustment.dividends)
+string bilTicker = ticker.modify(
+    BIL, session = session.regular, adjustment = adjustment.dividends)
+
+float spy12 = request.security(
+    spyTicker, "1M", close[1] / close[13] - 1.0,
+    gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+float qqq12 = request.security(
+    qqqTicker, "1M", close[1] / close[13] - 1.0,
+    gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+float bil12 = request.security(
+    bilTicker, "1M", close[1] / close[13] - 1.0,
+    gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+
+string winner = spy12 >= qqq12 ? "SPY" : "QQQ"
+float winnerReturn = winner == "SPY" ? spy12 : qqq12
+string target = winnerReturn > bil12 ? winner : "BIL"
+bool newMonth = timeframe.change("1M")
+bool switched = newMonth and target != target[1]
+
+plot(spy12 * 100.0, "SPY 12M", color = color.blue)
+plot(qqq12 * 100.0, "QQQ 12M", color = color.purple)
+plot(bil12 * 100.0, "BIL 12M", color = color.orange)
+hline(0.0, "Zero", color = color.gray)
+
+var table status = table.new(position.top_right, 2, 4, border_width = 1)
+if barstate.islast
+    table.cell(status, 0, 0, "Target")
+    table.cell(status, 1, 0, target)
+    table.cell(status, 0, 1, "SPY 12M")
+    table.cell(status, 1, 1, str.tostring(spy12 * 100.0, "#.##") + "%")
+    table.cell(status, 0, 2, "QQQ 12M")
+    table.cell(status, 1, 2, str.tostring(qqq12 * 100.0, "#.##") + "%")
+    table.cell(status, 0, 3, "BIL 12M")
+    table.cell(status, 1, 3, str.tostring(bil12 * 100.0, "#.##") + "%")
+
+alertcondition(switched, "Dual momentum target changed",
+    "Dual momentum target changed. Open the indicator table for the confirmed target.")
